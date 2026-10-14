@@ -11,10 +11,6 @@ The repository includes:
 
 The scripts cover different experiments and may use different parameter values. Refer to the relevant source files for each experiment’s assumptions and settings.
 
-## Scope
-
-The Lean developments verify mathematical properties under their stated assumptions, while the CARLA scripts provide simulation-based evaluation and visualization. Their results apply to the scenarios, models, and parameters used in those simulations.
-
 ## Running the code
 
 Use the Lean 4 version and project configuration specified in the Lean directory. Use a compatible CARLA installation for the simulation scripts. Each script or experiment may have its own input files and configuration; consult its source and any accompanying instructions before running it.
