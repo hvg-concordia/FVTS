@@ -6,15 +6,15 @@ This directory contains CARLA scripts for simulating selected controllers in lon
 
 The associated trajectory analysis uses two real-world datasets:
 
-- **HighD:** Provides highway vehicle trajectories. It does not identify whether each vehicle is human-driven or automated.
-- **NRC platooning experiment:** Provides a mixed-traffic interaction with a human-driven leader and an ACC-equipped follower.
+- **HighD Dataset:** Provides highway vehicle trajectories. It does not identify whether each vehicle is human-driven or automated.
+- **NRC Platooning Dataset:** Provides a mixed-traffic interaction with a human-driven leader and an ACC-equipped follower.
 
 These datasets support the real-world trajectory analysis. The CARLA scripts simulate vehicle interactions.
 
 ## Files
 
-- `HOCBF-FixedDelta.py` — CARLA simulation with a fixed-\(\delta\) HOCBF.
-- `HOCBF_Delta_Bounded_Rate.py` — CARLA simulation with an adaptive-\(\delta\) HOCBF.
+- `HOCBF-FixedDelta.py` — CARLA simulation with a fixed-\(\delta\) HOCBF; the associated real-world evaluation uses the NRC platooning dataset.
+- `HOCBF_Delta_Bounded_Rate.py` — CARLA simulation with an adaptive-\(\delta\) HOCBF; the associated real-world evaluation uses the NRC platooning dataset.
 - `TTC-BC-HighD.py` — TTC-based barrier certificate evaluation using HighD trajectories.
 - `TTC-THW-HighD.py` — Combined TTC–THW evaluation using HighD trajectories.
 
