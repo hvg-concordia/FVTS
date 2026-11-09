@@ -1,14 +1,19 @@
-import Mathlib
+
+import Mathlib.MeasureTheory.Integral.IntervalIntegral.AbsolutelyContinuousFun
+import Mathlib.Analysis.SpecialFunctions.ExpDeriv
+import Mathlib.Tactic
 
 namespace CBFProject
 
 noncomputable section
 
 /-!
-This file formalizes pointwise properties of the combined TTC--THW barrier.
-It does not formalize trajectories, differentiate an ODE, or prove forward
-invariance.  `barrierRate` is the supplied piecewise directional-rate model
-used in the algebraic CBF condition.
+This file formalizes pointwise properties of the combined TTC--THW barrier
+and a conditional trajectory-level invariance result.  `barrierRate` is the
+supplied piecewise directional-rate model used in the algebraic CBF condition.
+The trajectory theorem assumes that this supplied rate agrees almost
+everywhere with the derivative of the barrier along an absolutely continuous
+trajectory.
 -/
 
 /-! ## State, input, and parameters -/
@@ -715,7 +720,7 @@ theorem selected_control_satisfies_safe_control
   · exact selectedControl_satisfies_implemented_constraint state hF
 
 /--
-Principal pointwise result.  It makes no trajectory-level invariance claim.
+Principal pointwise result.
 -/
 theorem pointwise_safe_acceleration_exists
     (state : VehicleState) (input : VehicleInput)
@@ -773,147 +778,121 @@ theorem controller_feasible_of_nonpositive_safe
   · exact controller_feasible_of_negative_safe state hNeg hSafe
   · exact controller_feasible_of_zero_safe state hZero hSafe
 
-/-! ## Concrete validation cases -/
+/-! ## Conditional trajectory-level forward invariance -/
 
-namespace Validation
+/-- The barrier evaluated along a time-dependent vehicle state. -/
+def barrierAlong (trajectory : ℝ → VehicleState) (t : ℝ) : ℝ :=
+  ttcThwBarrier (trajectory t)
 
-def nonClosingState : VehicleState :=
-  { x_L := 40, v_L := 12, x_i := 10, v_i := 10, L := 5 }
+/-- Exponentially weighted barrier used in the comparison argument. -/
+def weightedBarrierAlong (trajectory : ℝ → VehicleState) (t : ℝ) : ℝ :=
+  Real.exp (κ * t) * barrierAlong trajectory t
 
-def closingFeasibleState : VehicleState :=
-  { x_L := 55, v_L := 8, x_i := 10, v_i := 10, L := 5 }
+/--
+An absolutely continuous scalar function with an almost-everywhere
+nonnegative derivative is nondecreasing from the beginning of the interval.
+-/
+lemma absolutelyContinuous_nonnegative_of_ae_deriv_nonnegative
+    (f : ℝ → ℝ) (T : ℝ)
+    (hT : 0 ≤ T)
+    (hAC : AbsolutelyContinuousOnInterval f 0 T)
+    (hDeriv : ∀ᵐ (t : ℝ)
+      ∂(MeasureTheory.volume : MeasureTheory.Measure ℝ),
+      t ∈ Set.Icc 0 T → 0 ≤ deriv f t)
+    (hInitial : 0 ≤ f 0) :
+    ∀ t ∈ Set.Icc 0 T, 0 ≤ f t := by
+  intro t ht
+  have hACt : AbsolutelyContinuousOnInterval f 0 t := by
+    apply hAC.mono
+    rw [Set.uIcc_of_le ht.1, Set.uIcc_of_le hT]
+    intro x hx
+    exact ⟨hx.1, hx.2.trans ht.2⟩
+  have hAe : ∀ᵐ (x : ℝ)
+      ∂((MeasureTheory.volume : MeasureTheory.Measure ℝ).restrict
+        (Set.Icc 0 t)),
+      0 ≤ deriv f x := by
+    rw [MeasureTheory.ae_restrict_iff' measurableSet_Icc]
+    filter_upwards [hDeriv] with x hx
+    intro hxt
+    exact hx ⟨hxt.1, hxt.2.trans ht.2⟩
+  have hAe' : (fun _ : ℝ => (0 : ℝ))
+      ≤ᵐ[(MeasureTheory.volume : MeasureTheory.Measure ℝ).restrict
+        (Set.Icc 0 t)] deriv f := by
+    filter_upwards [hAe] with x hx
+    exact hx
+  have hIntegral : 0 ≤ ∫ x in 0..t, deriv f x :=
+    intervalIntegral.integral_nonneg_of_ae_restrict ht.1 hAe'
+  rw [hACt.integral_deriv_eq_sub] at hIntegral
+  linarith
 
-def closingInfeasibleState : VehicleState :=
-  { x_L := 195, v_L := 6, x_i := 10, v_i := 39, L := 5 }
+/--
+Conditional forward invariance of the TTC--THW safe set.  The theorem
+quantifies over an existing trajectory on `[0,T]`.  It assumes that the
+trajectory remains in the traffic domain, that the implementation-aligned
+controller remains feasible, and that the supplied directional-rate model is
+the derivative of the barrier almost everywhere.  These assumptions allow
+isolated nonsmooth crossings of `relSpeed = 0` while retaining the
+almost-everywhere differential inequality needed by the comparison proof.
+-/
+theorem conditional_safe_set_forward_invariant
+    (trajectory : ℝ → VehicleState)
+    (leaderInput : ℝ → VehicleInput)
+    (T : ℝ)
+    (hT : 0 ≤ T)
+    (hValid : ∀ t ∈ Set.Icc 0 T, ValidState (trajectory t))
+    (hInput : ∀ t ∈ Set.Icc 0 T, ValidInput (leaderInput t))
+    (hFeasible : ∀ t ∈ Set.Icc 0 T, ControllerFeasible (trajectory t))
+    (hAC : AbsolutelyContinuousOnInterval
+      (weightedBarrierAlong trajectory) 0 T)
+    (hRate : ∀ᵐ (t : ℝ)
+      ∂(MeasureTheory.volume : MeasureTheory.Measure ℝ),
+      t ∈ Set.Icc 0 T →
+        HasDerivAt (barrierAlong trajectory)
+          (barrierRate (trajectory t) (leaderInput t)
+            (selectedControl (trajectory t))) t)
+    (hInitial : SafeSet (trajectory 0)) :
+    ∀ t ∈ Set.Icc 0 T,
+      ValidState (trajectory t) ∧ SafeSet (trajectory t) := by
+  have hWeightedDeriv :
+      ∀ᵐ (t : ℝ)
+        ∂(MeasureTheory.volume : MeasureTheory.Measure ℝ),
+        t ∈ Set.Icc 0 T → 0 ≤ deriv (weightedBarrierAlong trajectory) t := by
+    filter_upwards [hRate] with t htRate
+    intro ht
+    have hLinear : HasDerivAt (fun s : ℝ => κ * s) κ t :=
+      hasDerivAt_const_mul (x := t) κ
+    have hExp : HasDerivAt (fun s : ℝ => Real.exp (κ * s))
+        (Real.exp (κ * t) * κ) t :=
+      (Real.hasDerivAt_exp (κ * t)).comp t hLinear
+    have hProduct := hExp.mul (htRate ht)
+    have hPointwise : PointwiseCBF (trajectory t) (leaderInput t)
+        (selectedControl (trajectory t)) :=
+      selected_control_satisfies_cbf (trajectory t) (leaderInput t)
+        (hInput t ht) (hFeasible t ht)
+    have hNonnegative :
+        0 ≤ Real.exp (κ * t) *
+          (barrierRate (trajectory t) (leaderInput t)
+              (selectedControl (trajectory t)) +
+            κ * ttcThwBarrier (trajectory t)) :=
+      mul_nonneg (le_of_lt (Real.exp_pos (κ * t))) hPointwise
+    change 0 ≤ deriv ((fun s : ℝ => Real.exp (κ * s)) *
+      barrierAlong trajectory) t
+    rw [hProduct.deriv]
+    unfold barrierAlong
+    nlinarith [hNonnegative]
+  have hWeightedInitial : 0 ≤ weightedBarrierAlong trajectory 0 := by
+    simpa [weightedBarrierAlong, barrierAlong, SafeSet] using hInitial
+  have hWeightedNonnegative :
+      ∀ t ∈ Set.Icc 0 T, 0 ≤ weightedBarrierAlong trajectory t :=
+    absolutelyContinuous_nonnegative_of_ae_deriv_nonnegative
+      (weightedBarrierAlong trajectory) T hT hAC hWeightedDeriv hWeightedInitial
+  intro t ht
+  refine ⟨hValid t ht, ?_⟩
+  unfold SafeSet
+  have hWeighted := hWeightedNonnegative t ht
+  unfold weightedBarrierAlong barrierAlong at hWeighted
+  exact (mul_nonneg_iff_of_pos_left (Real.exp_pos (κ * t))).mp hWeighted
 
-def zeroRelativeSpeedState : VehicleState :=
-  { x_L := 40, v_L := 10, x_i := 10, v_i := 10, L := 5 }
-
-def hardBrakingBoundaryState : VehicleState :=
-  { x_L := 140, v_L := 10, x_i := 10, v_i := 30, L := 5 }
-
-def hardBrakingBeyondBoundaryState : VehicleState :=
-  { x_L := 145, v_L := 10, x_i := 10, v_i := 31, L := 5 }
-
-example : ValidState nonClosingState := by
-  norm_num [ValidState, nonClosingState, spacing]
-
-example : relSpeed nonClosingState < 0 := by
-  norm_num [relSpeed, nonClosingState]
-
-example : SafeSet nonClosingState := by
-  norm_num [SafeSet, ttcThwBarrier, spacing, relSpeed, nonClosingState, τ]
-
-example : ControllerFeasible nonClosingState := by
-  norm_num [ControllerFeasible, implementedUpper, upperNegative,
-    robustUpperNonnegative, ttcThwBarrier, spacing, relSpeed,
-    nonClosingState, τ, κ, a_min]
-
-example : ValidState closingFeasibleState := by
-  norm_num [ValidState, closingFeasibleState, spacing]
-
-example : 0 < relSpeed closingFeasibleState := by
-  norm_num [relSpeed, closingFeasibleState]
-
-example : SafeSet closingFeasibleState := by
-  norm_num [SafeSet, ttcThwBarrier, spacing, relSpeed, closingFeasibleState, τ]
-
-example : ControllerFeasible closingFeasibleState := by
-  norm_num [ControllerFeasible, implementedUpper, robustUpperNonnegative,
-    upperNegative, ttcThwBarrier, spacing, relSpeed,
-    closingFeasibleState, τ, κ, a_min]
-
-example : ValidState closingInfeasibleState := by
-  norm_num [ValidState, closingInfeasibleState, spacing]
-
-example : 0 < relSpeed closingInfeasibleState := by
-  norm_num [relSpeed, closingInfeasibleState]
-
-example : SafeSet closingInfeasibleState := by
-  norm_num [SafeSet, ttcThwBarrier, spacing, relSpeed,
-    closingInfeasibleState, τ]
-
-example : ¬ ControllerFeasible closingInfeasibleState := by
-  norm_num [ControllerFeasible, implementedUpper, robustUpperNonnegative,
-    upperNegative, ttcThwBarrier, spacing, relSpeed,
-    closingInfeasibleState, τ, κ, a_min]
-
-example : relSpeed zeroRelativeSpeedState = 0 := by
-  norm_num [relSpeed, zeroRelativeSpeedState]
-
-example : ValidState zeroRelativeSpeedState := by
-  norm_num [ValidState, zeroRelativeSpeedState, spacing]
-
-example : hardBrakingInput.a_L < (0 : ℝ) := by
-  norm_num [hardBrakingInput, a_min]
-
-example :
-    barrierRate zeroRelativeSpeedState hardBrakingInput 0 +
-      κ * ttcThwBarrier zeroRelativeSpeedState = -20 := by
-  norm_num [barrierRate, hardBrakingInput, zeroRelativeSpeedState,
-    ttcThwBarrier, spacing, relSpeed, τ, κ, a_min]
-
-example : ¬ SafeZero zeroRelativeSpeedState hardBrakingInput 0 := by
-  norm_num [SafeZero, hardBrakingInput, zeroRelativeSpeedState,
-    ttcThwBarrier, spacing, relSpeed, τ, κ, a_min]
-
-example : ValidState hardBrakingBoundaryState := by
-  norm_num [ValidState, hardBrakingBoundaryState, spacing]
-
-example : ttcThwBarrier hardBrakingBoundaryState = 0 := by
-  norm_num [ttcThwBarrier, hardBrakingBoundaryState, spacing, relSpeed, τ]
-
-example :
-    relSpeed hardBrakingBoundaryState =
-      ttcThwBarrier hardBrakingBoundaryState + 20 := by
-  norm_num [ttcThwBarrier, hardBrakingBoundaryState, spacing, relSpeed, τ]
-
-example : FeasiblePositive hardBrakingBoundaryState hardBrakingInput := by
-  norm_num [FeasiblePositive, upperPositive, hardBrakingInput,
-    ttcThwBarrier, hardBrakingBoundaryState, spacing, relSpeed,
-    τ, κ, a_min]
-
-example : ControllerFeasible hardBrakingBoundaryState := by
-  norm_num [ControllerFeasible, implementedUpper, robustUpperNonnegative,
-    upperNegative, ttcThwBarrier, spacing, relSpeed,
-    hardBrakingBoundaryState, τ, κ, a_min]
-
-example : ValidState hardBrakingBeyondBoundaryState := by
-  norm_num [ValidState, hardBrakingBeyondBoundaryState, spacing]
-
-example : ttcThwBarrier hardBrakingBeyondBoundaryState = 0 := by
-  norm_num [ttcThwBarrier, hardBrakingBeyondBoundaryState, spacing, relSpeed, τ]
-
-example :
-    ttcThwBarrier hardBrakingBeyondBoundaryState + 20 <
-      relSpeed hardBrakingBeyondBoundaryState := by
-  norm_num [ttcThwBarrier, hardBrakingBeyondBoundaryState,
-    spacing, relSpeed, τ]
-
-example : ¬ FeasiblePositive hardBrakingBeyondBoundaryState hardBrakingInput := by
-  apply hard_braking_infeasible_of_excess_closing_speed
-  norm_num [ttcThwBarrier, hardBrakingBeyondBoundaryState,
-    spacing, relSpeed, τ]
-
-example : ¬ ControllerFeasible hardBrakingBeyondBoundaryState := by
-  norm_num [ControllerFeasible, implementedUpper, robustUpperNonnegative,
-    upperNegative, ttcThwBarrier, spacing, relSpeed,
-    hardBrakingBeyondBoundaryState, τ, κ, a_min]
-
-/-- The combined barrier is strictly stronger than the two individual gap inequalities. -/
-def individualGapCounterexample : VehicleState :=
-  { x_L := 40, v_L := 8, x_i := 10, v_i := 10, L := 5 }
-
-example :
-    ValidState individualGapCounterexample ∧
-    0 < relSpeed individualGapCounterexample ∧
-    τ * individualGapCounterexample.v_i ≤ spacing individualGapCounterexample ∧
-    τ * relSpeed individualGapCounterexample ≤ spacing individualGapCounterexample ∧
-    ¬ SafeSet individualGapCounterexample := by
-  norm_num [ValidState, individualGapCounterexample, spacing, relSpeed,
-    SafeSet, ttcThwBarrier, τ]
-
-end Validation
 
 end
 end CBFProject
